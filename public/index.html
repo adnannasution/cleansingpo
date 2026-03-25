@@ -335,41 +335,66 @@ function doPipeline() {
   runScan(false, key)
 }
 
-// ── Core: SSE scan ─────────────────────────────────────────────────── //
-function runScan(skipLlm, apiKey) {
+// ── Core: polling scan (ganti SSE karena Railway proxy buffer SSE) ─── //
+async function runScan(skipLlm, apiKey) {
   const threshold = $('thr').value
   showProgress()
-  const url = `/py/scan-stream?session_id=${S.sessionId}&skip_llm=${skipLlm}&api_key=${encodeURIComponent(apiKey)}&threshold=${threshold}`
-  const es = new EventSource(url)
+  updateProgress(0, 'Memulai pipeline...')
 
-  es.onmessage = e => {
-    const d = JSON.parse(e.data)
-    if (d.type === 'progress') {
-      updateProgress(d.pct, d.msg)
-    } else if (d.type === 'done') {
-      es.close()
+  // Start job
+  let jobId
+  try {
+    const res = await fetch('/py/scan-start', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        session_id: S.sessionId,
+        api_key: apiKey,
+        skip_llm: skipLlm,
+        threshold: parseInt(threshold)
+      })
+    })
+    const d = await res.json()
+    if (!d.ok) { hideProgress(); alert('Gagal memulai: ' + d.error); return }
+    jobId = d.job_id
+  } catch(e) { hideProgress(); alert('Error: ' + e.message); return }
+
+  // Poll status every 800ms
+  const poll = setInterval(async () => {
+    try {
+      const res = await fetch(`/py/scan-status?job_id=${jobId}`)
+      const d = await res.json()
+
+      if (d.status === 'running') {
+        updateProgress(d.pct || 0, d.msg || '...')
+      } else if (d.status === 'done') {
+        clearInterval(poll)
+        hideProgress()
+        const r = d.result || {}
+        S.clusters  = r.clusters || []
+        S.decisions = {}
+        renderClusterList()
+        setStats(r.stats || {})
+        const s   = r.stats || {}
+        const sum = `💾 Cache: ${s.cache_hits||0}   ⚡ Auto: ${s.auto_merged||0}   🤖 AI: ${s.llm_clusters||0}`
+        $('pipe-stat').textContent = sum
+        const dupCount = S.clusters.filter(c => c.is_duplicate).length
+        $('dup-badge').textContent = `${dupCount} duplikat`
+        setStatus(`✅ Selesai — ${dupCount} duplikat dari ${S.clusters.length} cluster   |   ${sum}`)
+        const first = S.clusters.find(c => c.is_duplicate)
+        if (first) selectCluster(first)
+      } else if (d.status === 'error' || d.status === 'not_found') {
+        clearInterval(poll)
+        hideProgress()
+        setStatus('❌ Error: ' + d.msg)
+        alert('Pipeline error:\n' + (d.error || d.msg))
+      }
+    } catch(e) {
+      clearInterval(poll)
       hideProgress()
-      S.clusters = d.clusters || []
-      S.decisions = {}
-      renderClusterList()
-      setStats(d.stats || {})
-      const s = d.stats || {}
-      const sum = `💾 Cache: ${s.cache_hits||0}   ⚡ Auto: ${s.auto_merged||0}   🤖 AI: ${s.llm_clusters||0}`
-      $('pipe-stat').textContent = sum
-      const dupCount = S.clusters.filter(c => c.is_duplicate).length
-      $('dup-badge').textContent = `${dupCount} duplikat`
-      setStatus(`✅ Selesai — ${dupCount} duplikat dari ${S.clusters.length} cluster   |   ${sum}`)
-      // Auto-select first duplicate
-      const first = S.clusters.find(c => c.is_duplicate)
-      if (first) selectCluster(first)
-    } else if (d.type === 'error') {
-      es.close()
-      hideProgress()
-      setStatus('❌ Error: ' + d.msg)
-      alert('Pipeline error:\n' + d.msg)
+      setStatus('❌ Koneksi error: ' + e.message)
     }
-  }
-  es.onerror = () => { es.close(); hideProgress(); setStatus('❌ Koneksi terputus.') }
+  }, 800)
 }
 
 // ── Progress ───────────────────────────────────────────────────────── //
