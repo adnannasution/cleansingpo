@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y python3 python3-venv python3-pip
 WORKDIR /app
 COPY . .
 
-# Create virtual environment
+# Python venv
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -17,12 +17,12 @@ RUN pip install -r requirements.txt
 # Install Node deps
 RUN npm install
 
-# Set env
+# Railway uses PORT env
 ENV PYTHON_PORT=5001
 
-# Expose port Railway
+# Expose Railway port
 EXPOSE 3000
 EXPOSE 5001
 
-# Start Python + Node
-CMD sh -c "python python/worker.py & node server.js"
+# Start Python first, then Node
+CMD sh -c "python python/worker.py & sleep 5 && node server.js"
