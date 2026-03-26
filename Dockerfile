@@ -1,23 +1,22 @@
-FROM node:20-slim
+FROM node:20
 
-# Install Python + pip
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python
+RUN apt-get update && apt-get install -y python3 python3-pip
 
 WORKDIR /app
-
-# Python deps
-COPY requirements.txt .
-RUN pip3 install --break-system-packages -r requirements.txt
-
-# Node deps
-COPY package.json .
-RUN npm install --production
-
-# App files
 COPY . .
 
-EXPOSE 3000
+# Install dependencies
+RUN pip install -r requirements.txt
+RUN npm install
 
-CMD ["node", "server.js"]
+# Set environment
+ENV PYTHON_PORT=5001
+ENV NODE_PORT=3000
+
+# Expose ports
+EXPOSE 3000
+EXPOSE 5001
+
+# Run Python worker + Node server
+CMD python3 python/worker.py & node server.js
