@@ -10,20 +10,19 @@ COPY . .
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
+# Install Python deps
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Install Node dependencies
+# Install Node deps
 RUN npm install
 
-# Environment
+# Set env
 ENV PYTHON_PORT=5001
-ENV NODE_PORT=3000
 
-# Expose ports
+# Expose port Railway
 EXPOSE 3000
 EXPOSE 5001
 
-# Run Python + Node
-CMD python python/worker.py & node server.js
+# Start Python + Node
+CMD sh -c "python python/worker.py & node server.js"
