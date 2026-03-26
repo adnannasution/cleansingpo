@@ -27,7 +27,6 @@ app.get("/scan-status", async (req, res) => {
     res.json(data);
 });
 
-// PENTING BANGET
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log("Node running on port", PORT);
