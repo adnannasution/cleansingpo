@@ -267,7 +267,7 @@ async function onFileSelected(inp) {
   fd.append('session_id', S.sessionId)
   setStatus('⏳ Mengupload file...')
   try {
-    const res = await fetch('/py/upload', { method: 'POST', body: fd })
+    const res = await fetch('/api/upload', { method: 'POST', body: fd })
     const d = await res.json()
     if (!d.ok) { alert('Gagal: ' + d.error); return }
 
@@ -301,7 +301,7 @@ async function onColSelected() {
 }
 
 async function setColumn(col) {
-  await fetch('/py/set-column', {
+  await fetch('/api/set-column', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ session_id: S.sessionId, column: col })
@@ -323,7 +323,7 @@ function doScan() { runScan(true, '') }
 async function showPipelineModal() {
   $('pipeline-modal').classList.add('show')
   try {
-    const r = await fetch(`/py/cache-stats?session_id=${S.sessionId}`)
+    const r = await fetch(`/api/cache-stats?session_id=${S.sessionId}`)
     const d = await r.json()
     $('modal-cache-info').textContent = `Cache: ${d.total||0} entri tersimpan`
   } catch(_) { $('modal-cache-info').textContent = '' }
@@ -344,7 +344,7 @@ async function runScan(skipLlm, apiKey) {
   // Start job
   let jobId
   try {
-    const res = await fetch('/py/scan-start', {
+    const res = await fetch('/api/scan-start', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -362,7 +362,7 @@ async function runScan(skipLlm, apiKey) {
   // Poll status every 800ms
   const poll = setInterval(async () => {
     try {
-      const res = await fetch(`/py/scan-status?job_id=${jobId}`)
+      const res = await fetch(`/api/scan-status?job_id=${jobId}`)
       const d = await res.json()
 
       if (d.status === 'running') {
@@ -558,7 +558,7 @@ async function doExport() {
 
   setStatus('💾 Mengekspor...')
   try {
-    const res = await fetch('/py/export', {
+    const res = await fetch('/api/export', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ session_id: S.sessionId, decisions: S.decisions })
