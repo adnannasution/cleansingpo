@@ -544,9 +544,10 @@ function renderDetailPanel(c) {
         const kat   = esc(item['Kategori'] || '—')
 
         // Extra Excel columns not in default detail
+        const descColKey = $('col-select')?.value || ''
         const extraColsHtml = S.excelColumns
-          .filter(col => !S.hiddenCols.has('extra:'+col) &&
-            !['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori','PO Text'].includes(col))
+          .filter(col => !PO_FIXED_COLS.includes(col) && col !== descColKey)
+          .filter(col => !S.hiddenCols.has('extra:'+col))
           .filter(col => item[col] != null && String(item[col]).trim() !== '')
           .map(col => `<td style="padding:4px 8px;width:120px;color:#546E7A;font-weight:600">${esc(col)}</td>
             <td style="padding:4px 8px;color:#1B5E20">${esc(String(item[col]))}</td>`)
@@ -693,30 +694,40 @@ document.addEventListener('keydown', e => {
 })
 
 // ── Column Visibility ──────────────────────────────────────────────── //
+// Kolom yang selalu ditampilkan di PO detail row secara otomatis (tidak perlu ditoggle)
+const PO_FIXED_COLS = ['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori','PO Text']
+
 function buildColVisUI(cols) {
   // Fixed display columns for the variant table
   const fixedCols = ['Deskripsi Original','Jumlah Baris','Sumber RU','Similarity','Confidence']
   // Additional Excel columns that can be toggled (shown in PO detail rows)
-  const extraCols = cols.filter(c => !['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori'].includes(c))
+  // Exclude: PO fixed cols, the selected description column, and columns that don't add value
+  const descCol = $('col-select')?.value || ''
+  const extraCols = cols.filter(c =>
+    !PO_FIXED_COLS.includes(c) &&
+    c !== descCol
+  )
 
   const list = $('col-vis-list')
-  // Section: fixed main table columns
   let html = `<div style="padding:3px 14px 2px;font-size:10px;color:#90A4AE;font-weight:700;text-transform:uppercase">Kolom Tabel Utama</div>`
   fixedCols.forEach(col => {
+    const safeId = 'cv-main-' + col.replace(/[^a-zA-Z0-9]/g,'_')
+    const safeCol = col.replace(/\\/g,'\\\\').replace(/'/g,"\\'")
     const checked = !S.hiddenCols.has('main:'+col) ? 'checked' : ''
     html += `<div class="col-vis-item">
-      <input type="checkbox" id="cv-main-${col.replace(/\s+/g,'_')}" ${checked} onchange="toggleMainCol('${col}',this.checked)">
-      <label for="cv-main-${col.replace(/\s+/g,'_')}">${col}</label>
+      <input type="checkbox" id="${safeId}" ${checked} onchange="toggleMainCol('${safeCol}',this.checked)">
+      <label for="${safeId}">${col}</label>
     </div>`
   })
-  // Section: extra excel columns in detail
   if (extraCols.length) {
     html += `<div style="padding:6px 14px 2px;font-size:10px;color:#90A4AE;font-weight:700;text-transform:uppercase;border-top:1px solid #EEF2F7;margin-top:4px">Info Tambahan (Detail PO)</div>`
     extraCols.forEach(col => {
+      const safeId = 'cv-extra-' + col.replace(/[^a-zA-Z0-9]/g,'_')
+      const safeCol = col.replace(/\\/g,'\\\\').replace(/'/g,"\\'")
       const checked = !S.hiddenCols.has('extra:'+col) ? 'checked' : ''
       html += `<div class="col-vis-item">
-        <input type="checkbox" id="cv-extra-${col.replace(/\s+/g,'_')}" ${checked} onchange="toggleExtraCol('${col}',this.checked)">
-        <label for="cv-extra-${col.replace(/\s+/g,'_')}">${col}</label>
+        <input type="checkbox" id="${safeId}" ${checked} onchange="toggleExtraCol('${safeCol}',this.checked)">
+        <label for="${safeId}">${col}</label>
       </div>`
     })
   }
