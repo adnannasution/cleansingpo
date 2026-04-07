@@ -706,7 +706,7 @@ function renderDetailPanel(c) {
     allCols.map(col => `<th>${esc(col.label)}</th>`).join('')
 
   $('detail-body').innerHTML = `
-    <div class="card">
+    <div class="card" style="max-height: 400px; overflow-y: auto;">
       <div class="card-title">
         📋 Varian yang Terdeteksi Mirip
         <span style="color:#90A4AE;font-weight:400;font-size:11px;margin-left:6px">— <mark class="po-match" style="font-style:normal;font-size:10px">highlight</mark> = kata yang sama antar baris PO Text</span>
