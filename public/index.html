@@ -68,12 +68,12 @@ input[type=range]{width:90px;accent-color:#2979FF}
 .detail-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
 
 /* Table card */
-.card{background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.card-title{padding:8px 12px;font-weight:700;font-size:12px;border-bottom:1px solid var(--border);background:#F8FAFC}
-.tbl-wrap{overflow-x:auto;width:100%}
+.card{background:var(--white);border:1px solid var(--border);border-radius:8px;overflow:visible}
+.card-title{padding:8px 12px;font-weight:700;font-size:12px;border-bottom:1px solid var(--border);background:#F8FAFC;border-radius:8px 8px 0 0}
+.tbl-wrap{overflow-x:auto;width:100%;border-radius:0 0 8px 8px}
 table{width:max-content;min-width:100%;border-collapse:collapse;font-size:12px}
 thead th{background:var(--navy);color:#fff;padding:7px 10px;text-align:left;white-space:nowrap;min-width:120px}
-thead th:first-child{min-width:220px}
+thead th:first-child{min-width:240px}
 tbody tr:nth-child(even){background:#E3F2FD}
 tbody tr:hover{background:#C5DFF8!important;cursor:pointer}
 tbody tr.row-selected{background:#BBDEFB!important;outline:2px solid #2979FF}
@@ -340,11 +340,10 @@ async function onFileSelected(inp) {
     $('action-bar').style.display = 'flex'
     $('upload-zone').style.display = 'none'
 
-    // Save excel columns & build column visibility UI
+    // Save excel columns (don't build col UI yet - wait for scan)
     S.excelColumns = d.columns || []
     S.hiddenCols = new Set()
-    buildColVisUI(S.excelColumns)
-    $('col-vis-wrap').style.display = 'flex'
+    $('col-vis-wrap').style.display = 'none'  // hide until scan done
     $('btn-clear-cache').style.display = 'flex'
 
     if (d.auto_detect) await setColumn(d.auto_detect)
@@ -430,6 +429,10 @@ async function runScan(skipLlm, apiKey) {
         const dupCount = S.clusters.filter(c => c.is_duplicate).length
         $('dup-badge').textContent = `${dupCount} duplikat`
         setStatus(`✅ Selesai — ${dupCount} duplikat dari ${S.clusters.length} cluster   |   ${sum}`)
+        // Tampilkan tombol kolom dan build UI setelah scan selesai
+        S.hiddenCols = new Set()
+        buildColVisUI(S.excelColumns)
+        $('col-vis-wrap').style.display = 'flex'
         const first = S.clusters.find(c => c.is_duplicate) || S.clusters[0]
         if (first) selectCluster(first)
       } else if (d.status === 'error' || d.status === 'not_found') {
@@ -518,9 +521,18 @@ function renderDetailPanel(c) {
     {key:'Confidence',         label:'Confidence'},
   ].filter(col => !S.hiddenCols.has('main:'+col.key))
 
+  // Extra Excel cols yang dicentang, tampil sebagai kolom tabel (nilai dari item pertama per variant)
+  const extraMainCols = S.excelColumns
+    .filter(col => !PO_FIXED_COLS.includes(col) && col !== descCol)
+    .filter(col => !S.hiddenCols.has('extra:'+col))
+    .map(col => ({key: col, label: col, isExtra: true}))
+
+  const allCols = [...mainCols, ...extraMainCols]
+
   // Build main variants table
   const variantRows = c.orig_descs.map((desc, i) => {
     const items = byDesc[desc] || []
+    const firstItem = items[0] || {}
     const jmlBaris = items.length || '—'
     const ruSet = [...new Set(items.map(r => String(r['Sumber RU'] || '')).filter(Boolean))].sort()
     const ruStr = ruSet.join(', ') || (c.ru_list||[]).join(', ') || '—'
@@ -557,7 +569,7 @@ function renderDetailPanel(c) {
         const poTextInfo = renderPOTextInfo(item)
 
         return `<tr class="po-detail-row">
-          <td colspan="${mainCols.length}" style="padding:0">
+          <td colspan="${allCols.length}" style="padding:0">
             <table style="width:100%;font-size:11px;border-collapse:collapse">
               <tr style="background:#E8F5E9">
                 <td style="padding:4px 10px 4px 24px;width:180px;color:#546E7A;font-weight:600">No PO</td>
@@ -592,7 +604,12 @@ function renderDetailPanel(c) {
       'Similarity': `<td style="text-align:center">${sim}</td>`,
       'Confidence': `<td style="text-align:center" class="${confCls}">${confDisp}</td>`,
     }
-    const cells = mainCols.map(col => cellMap[col.key] || '').join('')
+    const cells = allCols.map(col => {
+      if (cellMap[col.key]) return cellMap[col.key]
+      // Extra col: ambil nilai dari item pertama di variant ini
+      const val = firstItem[col.key]
+      return `<td>${val != null && String(val).trim() !== '' ? esc(String(val)) : '—'}</td>`
+    }).join('')
 
     return `<tr class="${variantCls}" onclick="${hasItems ? `togglePODetail(${JSON.stringify(desc)})` : ''}" style="${hasItems ? 'cursor:pointer' : ''}">
       ${cells}
@@ -635,7 +652,7 @@ function renderDetailPanel(c) {
   }
 
   // Build thead dynamically
-  const theadCells = mainCols.map(col => `<th>${col.label}</th>`).join('')
+  const theadCells = allCols.map(col => `<th>${col.label}</th>`).join('')
 
   $('detail-body').innerHTML = `
     <div class="card">
