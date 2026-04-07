@@ -344,7 +344,14 @@ async function onFileSelected(inp) {
 
     // Save excel columns & build column visibility UI
     S.excelColumns = d.columns || []
+    // Default: hide all excel cols except PO TEXT
+    const skipAlwaysSet = new Set(['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori'])
     S.hiddenCols = new Set()
+    S.excelColumns.forEach(col => {
+      if (skipAlwaysSet.has(col)) return // already excluded from UI
+      const isPOText = col === 'PO Text' || col === 'PO TEXT'
+      if (!isPOText) S.hiddenCols.add('excol:' + col)
+    })
     buildColVisUI(S.excelColumns)
     $('col-vis-wrap').style.display = 'flex'
     $('btn-clear-cache').style.display = 'flex'
