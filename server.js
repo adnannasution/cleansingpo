@@ -79,6 +79,7 @@ app.post('/api/scan-start', async (req, res) => {
         ai_result:      c.ai_result,
         items_count:    c.items_count,
         ru_list:        c.ru_list,
+        items:          c.items || [],
       }))
       jobs[jobId] = { status: 'done', pct: 100, msg: 'Selesai.',
                       result: { stats: s, clusters: data }, error: null }
