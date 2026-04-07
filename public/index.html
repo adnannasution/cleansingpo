@@ -165,6 +165,21 @@ mark.po-match{background:#FFF176;color:#37474F;border-radius:3px;padding:1px 2px
 .btn-red{background:#C62828}
 .btn-red:hover:not(:disabled){background:#B71C1C}
 
+/* Human review */
+.human-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#F0F4F8;border-top:1px solid var(--border);border-radius:0 0 8px 8px;flex-wrap:wrap}
+.btn-human-same{background:#2E7D32;color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;transition:.15s}
+.btn-human-same:hover{background:#1B5E20}
+.btn-human-same:disabled{opacity:.4;cursor:not-allowed}
+.btn-human-reset{background:#CFD8DC;color:#37474F;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
+.btn-human-reset:hover{background:#B0BEC5}
+.human-bar-info{font-size:11px;color:#546E7A;flex:1}
+.human-badge{display:inline-flex;align-items:center;gap:5px;background:#C8E6C9;color:#1B5E20;border:1px solid #A5D6A7;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:700}
+.row-human-checked{background:#E8F5E9!important}
+.row-human-merged{background:#C8E6C9!important;opacity:.8}
+thead th.th-check{width:32px;text-align:center;padding:7px 6px}
+tbody td.td-check{text-align:center;padding:6px}
+tbody td.td-check input[type=checkbox]{accent-color:var(--green);width:14px;height:14px;cursor:pointer}
+
 /* AI info card enhanced */
 .ai-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
 .ai-info-item{background:#fff;border:1px solid #BBDEFB;border-radius:6px;padding:7px 10px}
@@ -303,6 +318,7 @@ const S = {
   expandedRows: new Set(), // row_ids yang sedang di-expand PO detail
   excelColumns: [],        // semua kolom dari Excel
   hiddenCols: new Set(),   // kolom yang disembunyikan di tabel variants
+  humanDecisions: {},      // clusterId -> { checkedDescs: Set, markedSame: bool }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────── //
@@ -392,6 +408,8 @@ function showPipelineConfirm() { $('pipeline-modal').classList.add('show') }
 function closePipelineModal()  { $('pipeline-modal').classList.remove('show') }
 function doPipeline() {
   closePipelineModal()
+  const skipped = Object.values(S.humanDecisions).filter(hd => hd.markedSame).length
+  if (skipped > 0) setStatus(`🚀 Menjalankan Pipeline AI — ${skipped} cluster diskip (sudah ditandai manual)...`)
   runScan(false, API_KEY)
 }
 
@@ -411,7 +429,10 @@ async function runScan(skipLlm, apiKey) {
         session_id: S.sessionId,
         api_key: apiKey,
         skip_llm: skipLlm,
-        threshold: parseInt(threshold)
+        threshold: parseInt(threshold),
+        skip_cluster_ids: Object.entries(S.humanDecisions)
+          .filter(([,hd]) => hd.markedSame)
+          .map(([id]) => parseInt(id))
       })
     })
     const d = await res.json()
@@ -431,6 +452,10 @@ async function runScan(skipLlm, apiKey) {
         hideProgress()
         const r = d.result || {}
         S.clusters = r.clusters || []
+        // Restore human decisions on re-scan
+        S.clusters.forEach(c => {
+          if (S.humanDecisions[c.id]?.markedSame) c._humanSame = true
+        })
         renderClusterList()
         setStats(r.stats || {})
         const s   = r.stats || {}
@@ -483,9 +508,11 @@ function renderClusterList() {
     const active = S.currentCluster?.id === c.id ? ' active' : ''
     const mIcon = {CACHE:'💾',FUZZY_AUTO:'⚡',LLM:'🤖',AUTO_MERGED:'⚡'}[c.method] || ''
     const aiTag = c.ai_result ? ' 🤖' : ''
-    return `<div class="cluster-card ${cls}${active}" onclick="selectClusterById(${c.id})">
-      <div class="cluster-card-title">${icon} [${c.avg_score}%] ${mIcon} ${esc(c.suggested_name.slice(0,36))}${aiTag}</div>
-      <div class="cluster-card-sub">${c.orig_descs.length} varian · ${c.items_count} baris</div>
+    const humanTag = c._humanSame ? ' 👤' : ''
+    const humanBorder = c._humanSame ? ' cluster-card-human' : ''
+    return `<div class="cluster-card ${cls}${active}${humanBorder}" onclick="selectClusterById(${c.id})">
+      <div class="cluster-card-title">${icon} [${c.avg_score}%] ${mIcon} ${esc(c.suggested_name.slice(0,36))}${aiTag}${humanTag}</div>
+      <div class="cluster-card-sub">${c.orig_descs.length} varian · ${c.items_count} baris${c._humanSame ? ' · <span style="color:#2E7D32;font-weight:700">SAMA (Manual)</span>' : ''}</div>
     </div>`
   }).join('')
 }
@@ -612,16 +639,20 @@ function renderDetailPanel(c) {
       return `<td style="white-space:nowrap">${esc(val)}</td>`
     }).join('')
 
-    return `<tr class="${variantCls}">${cells}</tr>`
+    const hd = S.humanDecisions[c.id]
+    const isChecked = hd?.checkedDescs?.has(desc) ? 'checked' : ''
+    const isMerged  = hd?.markedSame
+    const rowExtraCls = isMerged ? 'row-human-merged' : (isChecked ? 'row-human-checked' : '')
+    const safeDesc = desc.replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+    const chkCell = `<td class="td-check"><input type="checkbox" ${isChecked} onchange="onRowCheck('${safeDesc}',this.checked)" ${isMerged?'disabled':''}></td>`
+    return `<tr class="${variantCls} ${rowExtraCls}">${chkCell}${cells}</tr>`
   }).join('')
 
   // AI result card — enhanced with catalog info
   const ai = c.ai_result
   let aiHtml = ''
+  const hdFinal = S.humanDecisions[c.id]
   if (ai) {
-    const verdict = ai.is_same_item
-      ? '<span class="verdict verdict-same">✅ SAMA</span>'
-      : '<span class="verdict verdict-diff">⚠️ BERBEDA</span>'
     const confMap = {high:'🟢 HIGH',medium:'🟡 MEDIUM',low:'🔴 LOW'}
     const confStr = confMap[ai.confidence] || ai.confidence
     const warnHtml = ai.warnings?.length
@@ -635,7 +666,6 @@ function renderDetailPanel(c) {
       <div class="ai-card-top">
         <span class="ai-title">🤖 Hasil AI Validation</span>
         <div class="ai-badges">
-          ${verdict}
           <span class="conf-badge">${confStr}</span>
         </div>
       </div>
@@ -649,7 +679,31 @@ function renderDetailPanel(c) {
     </div>`
   }
 
-  const theadCells = allCols.map(col => `<th>${esc(col.label)}</th>`).join('')
+  // Human decision status
+  const hdChecked = hdFinal?.checkedDescs?.size || 0
+  const hdMarked  = hdFinal?.markedSame || false
+  const humanBarHtml = `
+  <div class="human-bar" id="human-bar-${c.id}">
+    <button class="btn-human-same" id="btn-mark-same-${c.id}"
+      onclick="markHumanSame(${c.id})"
+      ${hdMarked || hdChecked < 1 ? 'disabled' : ''}>
+      ✅ Tandai Sama
+    </button>
+    <button class="btn-human-reset" onclick="resetHumanDecision(${c.id})"
+      ${!hdMarked ? 'style="display:none"' : ''}>
+      ↩ Reset
+    </button>
+    <span class="human-bar-info" id="human-info-${c.id}">
+      ${hdMarked
+        ? `<span class="human-badge">👤 Ditandai Sama oleh User (${hdChecked} varian) — tidak akan diproses AI</span>`
+        : (hdChecked > 0
+          ? `${hdChecked} varian dipilih — klik <b>Tandai Sama</b> untuk konfirmasi`
+          : 'Centang baris yang dianggap sama, lalu klik <b>Tandai Sama</b>')}
+    </span>
+  </div>`
+
+  const theadCells = '<th class="th-check"><input type="checkbox" id="chk-all" title="Pilih semua" onchange="toggleCheckAll(this.checked)"></th>' +
+    allCols.map(col => `<th>${esc(col.label)}</th>`).join('')
 
   $('detail-body').innerHTML = `
     <div class="card">
@@ -663,6 +717,7 @@ function renderDetailPanel(c) {
           <tbody id="variant-tbody">${variantRows}</tbody>
         </table>
       </div>
+      ${humanBarHtml}
     </div>
     ${aiHtml}
   `
@@ -772,6 +827,66 @@ function toggleExcelCol(col, visible) {
 
 // keep old name as alias for any leftover references
 function toggleExtraCol(col, visible) { toggleExcelCol(col, visible) }
+
+// ── Human Review ──────────────────────────────────────────────────── //
+function onRowCheck(desc, checked) {
+  const c = S.currentCluster
+  if (!c) return
+  if (!S.humanDecisions[c.id]) S.humanDecisions[c.id] = { checkedDescs: new Set(), markedSame: false }
+  const hd = S.humanDecisions[c.id]
+  if (hd.markedSame) return // already locked
+  if (checked) hd.checkedDescs.add(desc)
+  else hd.checkedDescs.delete(desc)
+  // Update button state & info live (no full re-render)
+  const btn = document.getElementById('btn-mark-same-' + c.id)
+  const info = document.getElementById('human-info-' + c.id)
+  if (btn) btn.disabled = hd.checkedDescs.size < 1
+  if (info) {
+    const n = hd.checkedDescs.size
+    info.innerHTML = n > 0
+      ? `${n} varian dipilih — klik <b>Tandai Sama</b> untuk konfirmasi`
+      : 'Centang baris yang dianggap sama, lalu klik <b>Tandai Sama</b>'
+  }
+  // sync check-all
+  const allChk = document.getElementById('chk-all')
+  if (allChk) allChk.checked = hd.checkedDescs.size === c.orig_descs.length
+}
+
+function toggleCheckAll(checked) {
+  const c = S.currentCluster
+  if (!c) return
+  if (!S.humanDecisions[c.id]) S.humanDecisions[c.id] = { checkedDescs: new Set(), markedSame: false }
+  const hd = S.humanDecisions[c.id]
+  if (hd.markedSame) return
+  if (checked) c.orig_descs.forEach(d => hd.checkedDescs.add(d))
+  else hd.checkedDescs.clear()
+  renderDetailPanel(c) // re-render to sync all checkboxes
+}
+
+function markHumanSame(clusterId) {
+  const hd = S.humanDecisions[clusterId]
+  if (!hd || hd.checkedDescs.size < 1) return
+  hd.markedSame = true
+  // Mark cluster in S.clusters so it shows badge in sidebar
+  const c = S.clusters.find(x => x.id === clusterId)
+  if (c) {
+    c._humanSame = true
+    renderClusterList()
+  }
+  if (S.currentCluster?.id === clusterId) renderDetailPanel(S.currentCluster)
+  setStatus(`✅ Cluster #${clusterId} ditandai SAMA oleh user — akan diskip saat Pipeline AI.`)
+}
+
+function resetHumanDecision(clusterId) {
+  S.humanDecisions[clusterId] = { checkedDescs: new Set(), markedSame: false }
+  const c = S.clusters.find(x => x.id === clusterId)
+  if (c) {
+    c._humanSame = false
+    renderClusterList()
+  }
+  if (S.currentCluster?.id === clusterId) renderDetailPanel(S.currentCluster)
+  setStatus(`↩ Keputusan manual cluster #${clusterId} direset.`)
+}
 
 // ── Clear Cache ────────────────────────────────────────────────────── //
 async function doClearCache() {
