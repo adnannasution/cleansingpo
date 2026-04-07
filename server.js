@@ -124,4 +124,20 @@ app.get('/api/cache-stats', async (req, res) => {
   catch(_) { res.json({ total: 0 }) }
 })
 
+// ── Cache clear ─────────────────────────────────────────────────── //
+app.post('/api/cache-clear', async (req, res) => {
+  const { session_id: sid = 'default' } = req.body
+  try {
+    const cleaner = getSession(sid)
+    let cleared = 0
+    if (typeof cleaner.clearCache === 'function') {
+      cleared = await cleaner.clearCache()
+    } else {
+      delete sessions[sid]
+      cleared = -1
+    }
+    res.json({ ok: true, cleared })
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 app.listen(PORT, () => console.log(`[Server] port ${PORT}`))

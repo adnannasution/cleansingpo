@@ -145,6 +145,31 @@ tbody td{padding:6px 10px;border-bottom:1px solid #EEF2F7}
 /* Variant tab within cluster detail */
 .variant-row{background:#FFF8E1}
 .variant-row td:first-child{font-weight:700;color:#E65100}
+
+/* Column visibility panel */
+.col-vis-btn{background:#37474F;color:#B0BEC5;border:none;padding:6px 11px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+.col-vis-btn:hover{background:#546E7A;color:#fff}
+.col-vis-dropdown{position:absolute;top:54px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.18);z-index:200;min-width:220px;padding:8px 0;display:none}
+.col-vis-dropdown.open{display:block}
+.col-vis-header{padding:6px 14px 4px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.col-vis-item{display:flex;align-items:center;gap:8px;padding:5px 14px;cursor:pointer;transition:.1s}
+.col-vis-item:hover{background:#F0F4F8}
+.col-vis-item input[type=checkbox]{accent-color:var(--blue);width:14px;height:14px;cursor:pointer}
+.col-vis-item label{font-size:12px;color:var(--text);cursor:pointer;flex:1}
+.col-vis-wrap{position:relative}
+
+/* Clear cache button */
+.btn-red{background:#C62828}
+.btn-red:hover:not(:disabled){background:#B71C1C}
+
+/* AI info card enhanced */
+.ai-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.ai-info-item{background:#fff;border:1px solid #BBDEFB;border-radius:6px;padding:7px 10px}
+.ai-info-item-label{font-size:10px;color:#90A4AE;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.ai-info-item-val{font-size:12px;color:var(--text);font-weight:600;line-height:1.4}
+.ai-info-full{background:#fff;border:1px solid #BBDEFB;border-radius:6px;padding:7px 10px;margin-top:6px;grid-column:1/-1}
+.ai-po-text{font-size:11px;color:#455A64;line-height:1.7;font-family:monospace;white-space:pre-wrap;max-height:110px;overflow-y:auto;background:#F8FAFC;border-radius:4px;padding:6px 8px;margin-top:4px}
+.ai-section-divider{font-size:11px;font-weight:700;color:#1565C0;margin:8px 0 4px;border-bottom:1px solid #BBDEFB;padding-bottom:3px}
 </style>
 </head>
 <body>
@@ -170,6 +195,18 @@ tbody td{padding:6px 10px;border-bottom:1px solid #EEF2F7}
   </div>
 
   <div class="spacer"></div>
+
+  <!-- Column visibility toggle -->
+  <div class="col-vis-wrap" id="col-vis-wrap" style="display:none">
+    <button class="col-vis-btn" onclick="toggleColVis(event)">🗂️ Kolom ▾</button>
+    <div class="col-vis-dropdown" id="col-vis-dropdown">
+      <div class="col-vis-header">Tampilkan / Sembunyikan Kolom</div>
+      <div id="col-vis-list"></div>
+    </div>
+  </div>
+
+  <!-- Clear Cache -->
+  <button class="btn btn-red" id="btn-clear-cache" style="display:none" onclick="doClearCache()">🗑️ Clear Cache</button>
 </div>
 
 <!-- Main -->
@@ -261,6 +298,8 @@ const S = {
   filter: 'all',
   stats: {},
   expandedRows: new Set(), // row_ids yang sedang di-expand PO detail
+  excelColumns: [],        // semua kolom dari Excel
+  hiddenCols: new Set(),   // kolom yang disembunyikan di tabel variants
 }
 
 // ── Helpers ────────────────────────────────────────────────────────── //
@@ -299,6 +338,13 @@ async function onFileSelected(inp) {
     $('btn-pipeline').disabled = false
     $('action-bar').style.display = 'flex'
     $('upload-zone').style.display = 'none'
+
+    // Save excel columns & build column visibility UI
+    S.excelColumns = d.columns || []
+    S.hiddenCols = new Set()
+    buildColVisUI(S.excelColumns)
+    $('col-vis-wrap').style.display = 'flex'
+    $('btn-clear-cache').style.display = 'flex'
 
     if (d.auto_detect) await setColumn(d.auto_detect)
     setStatus(`✅ ${inp.files[0].name} — ${d.count} baris dimuat.`)
@@ -462,6 +508,15 @@ function renderDetailPanel(c) {
     byDesc[key].push(item)
   }
 
+  // Define main table columns with visibility support
+  const mainCols = [
+    {key:'Deskripsi Original', label:'Deskripsi Original'},
+    {key:'Jumlah Baris',       label:'Jumlah Baris'},
+    {key:'Sumber RU',          label:'Sumber RU'},
+    {key:'Similarity',         label:'Similarity'},
+    {key:'Confidence',         label:'Confidence'},
+  ].filter(col => !S.hiddenCols.has('main:'+col.key))
+
   // Build main variants table
   const variantRows = c.orig_descs.map((desc, i) => {
     const items = byDesc[desc] || []
@@ -476,6 +531,7 @@ function renderDetailPanel(c) {
     const toggleIcon = expanded ? '▼' : '▶'
     const hasItems = items.length > 0
 
+    // Collect PO info for all items in this variant (use first item for catalog info)
     let poRows = ''
     if (expanded && hasItems) {
       poRows = items.map(item => {
@@ -486,8 +542,20 @@ function renderDetailPanel(c) {
         const total = esc(item['Total Harga (IDR)'] || '—')
         const ru    = esc(item['Sumber RU'] || '—')
         const kat   = esc(item['Kategori'] || '—')
+
+        // Extra Excel columns not in default detail
+        const extraColsHtml = S.excelColumns
+          .filter(col => !S.hiddenCols.has('extra:'+col) &&
+            !['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori','PO Text'].includes(col))
+          .filter(col => item[col] != null && String(item[col]).trim() !== '')
+          .map(col => `<td style="padding:4px 8px;width:120px;color:#546E7A;font-weight:600">${esc(col)}</td>
+            <td style="padding:4px 8px;color:#1B5E20">${esc(String(item[col]))}</td>`)
+          .join('')
+
+        const poTextInfo = renderPOTextInfo(item)
+
         return `<tr class="po-detail-row">
-          <td colspan="5" style="padding:0">
+          <td colspan="${mainCols.length}" style="padding:0">
             <table style="width:100%;font-size:11px;border-collapse:collapse">
               <tr style="background:#E8F5E9">
                 <td style="padding:4px 10px 4px 24px;width:180px;color:#546E7A;font-weight:600">No PO</td>
@@ -505,6 +573,8 @@ function renderDetailPanel(c) {
                 <td style="padding:4px 8px;color:#546E7A;font-weight:600">Kategori</td>
                 <td style="padding:4px 8px;color:#2E7D32">${kat}</td>
               </tr>
+              ${extraColsHtml ? `<tr style="background:#F8F8FC">${extraColsHtml}</tr>` : ''}
+              ${poTextInfo ? `<tr style="background:#F0F7FF"><td colspan="6" style="padding:6px 24px">${poTextInfo}</td></tr>` : ''}
             </table>
           </td>
         </tr>`
@@ -512,16 +582,22 @@ function renderDetailPanel(c) {
     }
 
     const variantCls = i === 0 ? '' : 'variant-row'
+    // Build cells dynamically based on visible columns
+    const cellMap = {
+      'Deskripsi Original': `<td><span style="color:#1565C0;font-size:11px;margin-right:4px">${hasItems ? toggleIcon : ''}</span>${esc(desc)}</td>`,
+      'Jumlah Baris': `<td style="text-align:center">${jmlBaris}</td>`,
+      'Sumber RU': `<td>${ruStr}</td>`,
+      'Similarity': `<td style="text-align:center">${sim}</td>`,
+      'Confidence': `<td style="text-align:center" class="${confCls}">${confDisp}</td>`,
+    }
+    const cells = mainCols.map(col => cellMap[col.key] || '').join('')
+
     return `<tr class="${variantCls}" onclick="${hasItems ? `togglePODetail(${JSON.stringify(desc)})` : ''}" style="${hasItems ? 'cursor:pointer' : ''}">
-      <td><span style="color:#1565C0;font-size:11px;margin-right:4px">${hasItems ? toggleIcon : ''}</span>${esc(desc)}</td>
-      <td style="text-align:center">${jmlBaris}</td>
-      <td>${ruStr}</td>
-      <td style="text-align:center">${sim}</td>
-      <td style="text-align:center" class="${confCls}">${confDisp}</td>
+      ${cells}
     </tr>${poRows}`
   }).join('')
 
-  // AI result card
+  // AI result card — enhanced
   const ai = c.ai_result
   let aiHtml = ''
   if (ai) {
@@ -532,6 +608,11 @@ function renderDetailPanel(c) {
     const confStr = confMap[ai.confidence] || ai.confidence
     const warnHtml = ai.warnings?.length
       ? `<div class="ai-warning">⚠️ ${esc(ai.warnings.join(' | '))}</div>` : ''
+
+    // Gather catalog info from first item in cluster
+    const firstItem = (c.items || [])[0] || {}
+    const catalogInfoHtml = renderPOTextInfo(firstItem)
+
     aiHtml = `
     <div class="ai-card">
       <div class="ai-card-top">
@@ -547,18 +628,19 @@ function renderDetailPanel(c) {
       </div>
       <div class="ai-reasoning">💬 ${esc(ai.reasoning||'')}</div>
       ${warnHtml}
+      ${catalogInfoHtml}
     </div>`
   }
+
+  // Build thead dynamically
+  const theadCells = mainCols.map(col => `<th>${col.label}</th>`).join('')
 
   $('detail-body').innerHTML = `
     <div class="card">
       <div class="card-title">📋 Varian '${esc(descCol)}' yang Terdeteksi Mirip: <span style="color:#90A4AE;font-weight:400;font-size:11px">— klik baris untuk lihat detail PO</span></div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr>
-            <th>Deskripsi Original</th><th>Jumlah Baris</th>
-            <th>Sumber RU</th><th>Similarity</th><th>Confidence</th>
-          </tr></thead>
+          <thead><tr>${theadCells}</tr></thead>
           <tbody id="variant-tbody">${variantRows}</tbody>
         </table>
       </div>
@@ -609,6 +691,145 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closePipelineModal()
   if (e.key === 'Enter' && $('pipeline-modal').classList.contains('show')) doPipeline()
 })
+
+// ── Column Visibility ──────────────────────────────────────────────── //
+function buildColVisUI(cols) {
+  // Fixed display columns for the variant table
+  const fixedCols = ['Deskripsi Original','Jumlah Baris','Sumber RU','Similarity','Confidence']
+  // Additional Excel columns that can be toggled (shown in PO detail rows)
+  const extraCols = cols.filter(c => !['No PO','Qty Order','Satuan','Harga Satuan (IDR)','Total Harga (IDR)','Sumber RU','Kategori'].includes(c))
+
+  const list = $('col-vis-list')
+  // Section: fixed main table columns
+  let html = `<div style="padding:3px 14px 2px;font-size:10px;color:#90A4AE;font-weight:700;text-transform:uppercase">Kolom Tabel Utama</div>`
+  fixedCols.forEach(col => {
+    const checked = !S.hiddenCols.has('main:'+col) ? 'checked' : ''
+    html += `<div class="col-vis-item">
+      <input type="checkbox" id="cv-main-${col.replace(/\s+/g,'_')}" ${checked} onchange="toggleMainCol('${col}',this.checked)">
+      <label for="cv-main-${col.replace(/\s+/g,'_')}">${col}</label>
+    </div>`
+  })
+  // Section: extra excel columns in detail
+  if (extraCols.length) {
+    html += `<div style="padding:6px 14px 2px;font-size:10px;color:#90A4AE;font-weight:700;text-transform:uppercase;border-top:1px solid #EEF2F7;margin-top:4px">Info Tambahan (Detail PO)</div>`
+    extraCols.forEach(col => {
+      const checked = !S.hiddenCols.has('extra:'+col) ? 'checked' : ''
+      html += `<div class="col-vis-item">
+        <input type="checkbox" id="cv-extra-${col.replace(/\s+/g,'_')}" ${checked} onchange="toggleExtraCol('${col}',this.checked)">
+        <label for="cv-extra-${col.replace(/\s+/g,'_')}">${col}</label>
+      </div>`
+    })
+  }
+  list.innerHTML = html
+}
+
+function toggleColVis(e) {
+  e.stopPropagation()
+  $('col-vis-dropdown').classList.toggle('open')
+}
+
+document.addEventListener('click', () => {
+  $('col-vis-dropdown')?.classList.remove('open')
+})
+
+function toggleMainCol(col, visible) {
+  if (visible) S.hiddenCols.delete('main:'+col)
+  else S.hiddenCols.add('main:'+col)
+  if (S.currentCluster) renderDetailPanel(S.currentCluster)
+}
+
+function toggleExtraCol(col, visible) {
+  if (visible) S.hiddenCols.delete('extra:'+col)
+  else S.hiddenCols.add('extra:'+col)
+  if (S.currentCluster) renderDetailPanel(S.currentCluster)
+}
+
+// ── Clear Cache ────────────────────────────────────────────────────── //
+async function doClearCache() {
+  if (!confirm('Hapus semua cache AI? Data hasil scan sebelumnya akan dihapus.')) return
+  try {
+    setStatus('🗑️ Menghapus cache...')
+    const res = await fetch('/api/cache-clear', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: S.sessionId })
+    })
+    const d = await res.json().catch(() => ({}))
+    setStatus(`✅ Cache dihapus. ${d.cleared || 0} entri dihapus.`)
+    $('pipe-stat').textContent = ''
+  } catch(e) {
+    // Fallback: just clear the local session state
+    S.clusters = []
+    S.currentCluster = null
+    S.expandedRows.clear()
+    renderClusterList()
+    $('detail-body').innerHTML = '<div class="empty">Cache dikosongkan. Jalankan scan ulang.</div>'
+    $('pipe-stat').textContent = ''
+    setStatus('✅ Cache lokal dikosongkan.')
+  }
+}
+
+// ── Parse PO Text info ─────────────────────────────────────────────── //
+function parsePOText(poText) {
+  if (!poText) return {}
+  const result = {}
+  const lines = String(poText).split('\n')
+  lines.forEach(line => {
+    const colonIdx = line.indexOf(':')
+    if (colonIdx < 0) return
+    const key = line.slice(0, colonIdx).trim()
+    const val = line.slice(colonIdx + 1).trim()
+    if (key && val) result[key] = val
+  })
+  return result
+}
+
+function renderPOTextInfo(item) {
+  const poText = item['PO Text'] || ''
+  const matType = item['Material Type'] || ''
+  const matGroup = item['Material Group'] || ''
+  const mfrPartNo = item['Manufacturer Part No.'] || ''
+  const uom = item['Base Unit of Measure'] || ''
+  const oldMatNo = item['Old material number'] || ''
+
+  const parsed = parsePOText(poText)
+  const fields = [
+    {label:'Material Type', val: matType},
+    {label:'Material Group', val: matGroup},
+    {label:'Mfr. Part No.', val: mfrPartNo || parsed['MANUFACTURER PART NUMBER'] || parsed['MPN'] || ''},
+    {label:'Satuan Dasar', val: uom},
+    {label:'Old Material No.', val: oldMatNo},
+    {label:'Manufacturer', val: parsed['MANUFACTURER'] || parsed['VENDOR'] || ''},
+    {label:'Part For (Equipment)', val: parsed['PART FOR'] || parsed['EQUIPMENT'] || ''},
+    {label:'Model/Type', val: parsed['MODEL/TYPE'] || parsed['MODEL'] || parsed['TYPE'] || ''},
+    {label:'Dimensi/Ukuran', val: parsed['DIMENSION'] || parsed['SIZE'] || parsed['DIMENSIONS'] || parsed['UKURAN'] || ''},
+    {label:'Material/Spec', val: parsed['MATERIAL'] || parsed['SPECIFICATION'] || parsed['SPEC'] || ''},
+    {label:'Standard', val: parsed['STANDARD'] || parsed['STD'] || ''},
+    {label:'Deskripsi', val: parsed['PART NAME'] || parsed['DESCRIPTION'] || parsed['PART DESCRIPTION'] || ''},
+  ].filter(f => f.val)
+
+  if (!fields.length && !poText) return ''
+
+  let html = `<div class="ai-section-divider">📦 Informasi Katalog & Dimensi Material</div>
+  <div class="ai-info-grid">`
+
+  fields.forEach(f => {
+    html += `<div class="ai-info-item">
+      <div class="ai-info-item-label">${esc(f.label)}</div>
+      <div class="ai-info-item-val">${esc(f.val)}</div>
+    </div>`
+  })
+  html += '</div>'
+
+  if (poText) {
+    html += `<div class="ai-info-full">
+      <div class="ai-info-item-label">📄 PO Text Lengkap</div>
+      <div class="ai-po-text">${esc(poText)}</div>
+    </div>`
+  }
+
+  return html
+}
 
 function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
